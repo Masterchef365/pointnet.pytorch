@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 import numpy as np
 from geoprofile import Geoprofile
+import h5py as h5
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -34,22 +35,32 @@ print("Random Seed: ", opt.manualSeed)
 random.seed(opt.manualSeed)
 torch.manual_seed(opt.manualSeed)
 
-dataset = Geoprofile(
-    r"D:\Datasets\weyco_philly",
-    250,
-    10
-)
-num_classes = 8
+def divide_chunks(l, n):
+    # looping till length l
+    for i in range(0, len(l), n): 
+        yield l[i:i + n]
 
-dataloader = torch.utils.data.DataLoader(
-    dataset['train'],
-    batch_size=opt.batchSize,
-    num_workers=int(opt.workers))
+dataset = h5.File(opt.dataset, "r")
+labels = divide_chunks(dataset['pcld_labels'], opt.batchSize)
+pclds = divide_chunks(dataset['pcld'], opt.batchSize)
 
-testdataloader = torch.utils.data.DataLoader(
-    dataset['test'],
-    batch_size=opt.batchSize,
-    num_workers=int(opt.workers))
+dataloader = zip(pclds, labels)
+#top_color = dataset['top_color']
+#right_color = dataset['right_color']
+#bottom_color = dataset['bottom_color']
+#left_color = dataset['left_color']
+#
+#ds_iter = zip(zip(pclds, top_color, right_color, bottom_color, left_color), labels)
+#for x, l in ds_iter:
+#    pcld, top, right, bottom, left = x
+#    print(pcld.shape, top.shape, right.shape, bottom.shape, left.shape, l.shape)
+
+num_classes = 45
+
+#testdataloader = torch.utils.data.DataLoader(
+#    dataset['test'],
+#    batch_size=opt.batchSize,
+#    num_workers=int(opt.workers))
 
 print('classes', num_classes)
 try:
@@ -70,11 +81,18 @@ classifier.cuda()
 
 num_batch = 0
 
+weights = [1.0 for _ in range(num_classes)]
+weights[0] = 0.0
+weights = torch.tensor(weights).cuda()
+
 for epoch in range(opt.nepoch):
     scheduler.step()
     for i, data in enumerate(dataloader, 0):
         points, target = data
+        points, target = torch.from_numpy(points), torch.from_numpy(target).long()
         points, target = points.cuda(), target.cuda()
+
+        points = points.transpose(1, 2)
 
         optimizer.zero_grad()
 
@@ -85,7 +103,7 @@ for epoch in range(opt.nepoch):
         target = target.view(-1, 1)[:, 0]
 
         #print(pred.size(), target.size())
-        loss = F.nll_loss(pred, target)
+        loss = F.nll_loss(pred, target, weight=weights)
 
         if opt.feature_transform:
             loss += feature_transform_regularizer(trans_feat) * 0.001
@@ -99,45 +117,45 @@ for epoch in range(opt.nepoch):
 
         print('[%d: %d/%d] train loss: %f accuracy: %f' % (epoch, i, num_batch, loss.item(), correct.item()/float(opt.batchSize * 2500)))
 
-        if i % 10 == 0:
-            j, data = next(enumerate(testdataloader, 0))
-            points, target = data
-            points, target = points.cuda(), target.cuda()
-            classifier = classifier.eval()
-            pred, _, _ = classifier(points)
-            pred = pred.view(-1, num_classes)
-            target = target.view(-1, 1)[:, 0]
-            loss = F.nll_loss(pred, target)
-            pred_choice = pred.data.max(1)[1]
-            correct = pred_choice.eq(target.data).cpu().sum()
-            print('[%d: %d/%d] %s loss: %f accuracy: %f' % (epoch, i, num_batch, blue('test'), loss.item(), correct.item()/float(opt.batchSize * 2500)))
+        #if i % 10 == 0:
+        #    j, data = next(enumerate(testdataloader, 0))
+        #    points, target = data
+        #    points, target = points.cuda(), target.cuda()
+        #    classifier = classifier.eval()
+        #    pred, _, _ = classifier(points)
+        #    pred = pred.view(-1, num_classes)
+        #    target = target.view(-1, 1)[:, 0]
+        #    loss = F.nll_loss(pred, target)
+        #    pred_choice = pred.data.max(1)[1]
+        #    correct = pred_choice.eq(target.data).cpu().sum()
+        #    print('[%d: %d/%d] %s loss: %f accuracy: %f' % (epoch, i, num_batch, blue('test'), loss.item(), correct.item()/float(opt.batchSize * 2500)))
 
     torch.save(classifier.state_dict(), '%s/seg_model_%s_%d.pth' % (opt.outf, opt.class_choice, epoch))
 
-## benchmark mIOU
-shape_ious = []
-for i,data in tqdm(enumerate(testdataloader, 0)):
-    points, target = data
-    points = points.transpose(2, 1)
-    points, target = points.cuda(), target.cuda()
-    classifier = classifier.eval()
-    pred, _, _ = classifier(points)
-    pred_choice = pred.data.max(2)[1]
-
-    pred_np = pred_choice.cpu().data.numpy()
-    target_np = target.cpu().data.numpy() - 1
-
-    for shape_idx in range(target_np.shape[0]):
-        parts = range(num_classes)#np.unique(target_np[shape_idx])
-        part_ious = []
-        for part in parts:
-            I = np.sum(np.logical_and(pred_np[shape_idx] == part, target_np[shape_idx] == part))
-            U = np.sum(np.logical_or(pred_np[shape_idx] == part, target_np[shape_idx] == part))
-            if U == 0:
-                iou = 1 #If the union of groundtruth and prediction points is empty, then count part IoU as 1
-            else:
-                iou = I / float(U)
-            part_ious.append(iou)
-        shape_ious.append(np.mean(part_ious))
-
-print("mIOU for class {}: {}".format(opt.class_choice, np.mean(shape_ious)))
+### benchmark mIOU
+#shape_ious = []
+#for i,data in tqdm(enumerate(testdataloader, 0)):
+#    points, target = data
+#    points = points.transpose(2, 1)
+#    points, target = points.cuda(), target.cuda()
+#    classifier = classifier.eval()
+#    pred, _, _ = classifier(points)
+#    pred_choice = pred.data.max(2)[1]
+#
+#    pred_np = pred_choice.cpu().data.numpy()
+#    target_np = target.cpu().data.numpy() - 1
+#
+#    for shape_idx in range(target_np.shape[0]):
+#        parts = range(num_classes)#np.unique(target_np[shape_idx])
+#        part_ious = []
+#        for part in parts:
+#            I = np.sum(np.logical_and(pred_np[shape_idx] == part, target_np[shape_idx] == part))
+#            U = np.sum(np.logical_or(pred_np[shape_idx] == part, target_np[shape_idx] == part))
+#            if U == 0:
+#                iou = 1 #If the union of groundtruth and prediction points is empty, then count part IoU as 1
+#            else:
+#                iou = I / float(U)
+#            part_ious.append(iou)
+#        shape_ious.append(np.mean(part_ious))
+#
+#print("mIOU for class {}: {}".format(opt.class_choice, np.mean(shape_ious)))
