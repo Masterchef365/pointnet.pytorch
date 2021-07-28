@@ -6,8 +6,8 @@ import torch
 import torch.nn.parallel
 import torch.optim as optim
 import torch.utils.data
-from pointnet.dataset import ShapeNetDataset
 from pointnet.model import PointNetDenseCls, feature_transform_regularizer
+from wacknet.model import WackNet
 import torch.nn.functional as F
 from tqdm import tqdm
 import numpy as np
@@ -43,8 +43,12 @@ def divide_chunks(l, n):
 dataset = h5.File(opt.dataset, "r")
 labels = divide_chunks(dataset['pcld_labels'], opt.batchSize)
 pclds = divide_chunks(dataset['pcld'], opt.batchSize)
+top_imgs = divide_chunks(dataset['top_color'], opt.batchSize)
+right_imgs = divide_chunks(dataset['right_color'], opt.batchSize)
+bottom_imgs = divide_chunks(dataset['bottom_color'], opt.batchSize)
+left_imgs = divide_chunks(dataset['left_color'], opt.batchSize)
 
-dataloader = zip(pclds, labels)
+dataloader = zip(zip(pclds, top_imgs, right_imgs, bottom_imgs, left_imgs), labels)
 #top_color = dataset['top_color']
 #right_color = dataset['right_color']
 #bottom_color = dataset['bottom_color']
@@ -70,7 +74,10 @@ except OSError:
 
 blue = lambda x: '\033[94m' + x + '\033[0m'
 
-classifier = PointNetDenseCls(k=num_classes, feature_transform=opt.feature_transform)
+narrow_width = 200
+wide_width = 500
+n_rows = 200
+classifier = WackNet(narrow_width, wide_width, n_rows, k=num_classes, feature_transform=opt.feature_transform)
 
 if opt.model != '':
     classifier.load_state_dict(torch.load(opt.model))
@@ -88,22 +95,25 @@ weights = torch.tensor(weights).cuda()
 for epoch in range(opt.nepoch):
     scheduler.step()
     for i, data in enumerate(dataloader, 0):
-        points, target = data
-        points, target = torch.from_numpy(points), torch.from_numpy(target).long()
-        points, target = points.cuda(), target.cuda()
-
-        points = points.transpose(1, 2)
+        (points, top, right, bottom, left), target = data
+        points = torch.from_numpy(points).transpose(1, 2).cuda()
+        top = torch.from_numpy(top).transpose(1, 3).cuda().float() / 255.
+        right = torch.from_numpy(right).transpose(1, 3).cuda().float() / 255.
+        bottom = torch.from_numpy(bottom).transpose(1, 3).cuda().float() / 255.
+        left = torch.from_numpy(left).transpose(1, 3).cuda().float() / 255.
+        target = torch.from_numpy(target).cuda().long()
 
         optimizer.zero_grad()
 
         classifier = classifier.train()
-        pred, trans, trans_feat = classifier(points)
+        pred, trans, trans_feat = classifier(points, top, right, bottom, left)
 
         pred = pred.view(-1, num_classes)
         target = target.view(-1, 1)[:, 0]
 
         #print(pred.size(), target.size())
-        loss = F.nll_loss(pred, target, weight=weights)
+        #loss = F.nll_loss(pred, target, weight=weights)
+        loss = F.nll_loss(pred, target)
 
         if opt.feature_transform:
             loss += feature_transform_regularizer(trans_feat) * 0.001
