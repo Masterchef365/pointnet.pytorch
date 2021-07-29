@@ -9,6 +9,7 @@ import torch.utils.data
 from pointnet.model import PointNetDenseCls, feature_transform_regularizer
 from wacknet.model import WackNet
 import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import numpy as np
 from geoprofile import Geoprofile
@@ -24,8 +25,9 @@ parser.add_argument(
 parser.add_argument('--outf', type=str, default='seg', help='output folder')
 parser.add_argument('--model', type=str, default='', help='model path')
 parser.add_argument('--dataset', type=str, required=True, help="dataset path")
-parser.add_argument('--class_choice', type=str, default='Chair', help="class_choice")
 parser.add_argument('--feature_transform', action='store_true', help="use feature transform")
+
+writer = SummaryWriter()
 
 opt = parser.parse_args()
 print(opt)
@@ -81,10 +83,10 @@ classifier.cuda()
 
 num_batch = 0
 
-weights = [1.0 for _ in range(num_classes)]
-weights[0] = 0.0
+weights = [0.0 if i == 0 else 1.0 for i in range(num_classes)]
 weights = torch.tensor(weights).cuda()
 
+sample_idx = 0
 for epoch in range(opt.nepoch):
     scheduler.step()
     labels = divide_chunks(dataset['pcld_labels'], opt.batchSize)
@@ -113,8 +115,8 @@ for epoch in range(opt.nepoch):
         target = target.view(-1, 1)[:, 0]
 
         #print(pred.size(), target.size())
-        #loss = F.nll_loss(pred, target, weight=weights)
-        loss = F.nll_loss(pred, target)
+        loss = F.nll_loss(pred, target, weight=weights)
+        #loss = F.nll_loss(pred, target)
 
         if opt.feature_transform:
             loss += feature_transform_regularizer(trans_feat) * 0.001
@@ -124,9 +126,22 @@ for epoch in range(opt.nepoch):
 
         pred_choice = pred.data.max(1)[1]
 
-        correct = pred_choice.eq(target.data).cpu().sum()
+        # Ignore emtpy labels when testing accuracy
+        nonempty = pred_choice != 0
+        n_nonempty = torch.count_nonzero(nonempty)
 
-        print('[%d: %d/%d] train loss: %f accuracy: %f' % (epoch, i, num_batch, loss.item(), correct.item()/len(target.data.flatten())))
+        correct = (pred_choice.eq(target.data) & nonempty).cpu().sum()
+
+        accuracy = correct.item()/n_nonempty
+        writer.add_scalar('Loss/train', loss.item(), sample_idx)
+        writer.add_scalar('Accuracy/train', accuracy, sample_idx)
+
+        if n_nonempty != 0:
+            print('[%d: %d/%d] train loss: %f accuracy: %f' % (epoch, i, num_batch, loss.item(), accuracy))
+        else:
+            print("Rejected; nonempty == 0")
+        
+        sample_idx += 1
 
         #if i % 10 == 0:
         #    j, data = next(enumerate(testdataloader, 0))
@@ -141,9 +156,9 @@ for epoch in range(opt.nepoch):
         #    correct = pred_choice.eq(target.data).cpu().sum()
         #    print('[%d: %d/%d] %s loss: %f accuracy: %f' % (epoch, i, num_batch, blue('test'), loss.item(), correct.item()/float(opt.batchSize * 2500)))
 
-    if i % 10 == 0:
+    if epoch % 10 == 0:
         print("Saving...")
-        torch.save(classifier.state_dict(), '%s/seg_model_%s_%d.pth' % (opt.outf, opt.class_choice, epoch))
+        torch.save(classifier.state_dict(), '%s/seg_model_%d.pth' % (opt.outf, epoch))
 
 ### benchmark mIOU
 #shape_ious = []

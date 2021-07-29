@@ -10,3 +10,4 @@ seg/
 *.egg-info/
 venv
 *.pyd
+runs/
