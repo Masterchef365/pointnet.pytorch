@@ -41,14 +41,7 @@ def divide_chunks(l, n):
         yield l[i:i + n]
 
 dataset = h5.File(opt.dataset, "r")
-labels = divide_chunks(dataset['pcld_labels'], opt.batchSize)
-pclds = divide_chunks(dataset['pcld'], opt.batchSize)
-top_imgs = divide_chunks(dataset['top_color'], opt.batchSize)
-right_imgs = divide_chunks(dataset['right_color'], opt.batchSize)
-bottom_imgs = divide_chunks(dataset['bottom_color'], opt.batchSize)
-left_imgs = divide_chunks(dataset['left_color'], opt.batchSize)
 
-dataloader = zip(zip(pclds, top_imgs, right_imgs, bottom_imgs, left_imgs), labels)
 #top_color = dataset['top_color']
 #right_color = dataset['right_color']
 #bottom_color = dataset['bottom_color']
@@ -82,7 +75,7 @@ classifier = WackNet(narrow_width, wide_width, n_rows, k=num_classes, feature_tr
 if opt.model != '':
     classifier.load_state_dict(torch.load(opt.model))
 
-optimizer = optim.Adam(classifier.parameters(), lr=0.001, betas=(0.9, 0.999))
+optimizer = optim.Adam(classifier.parameters(), lr=0.0001, betas=(0.9, 0.999))
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
 classifier.cuda()
 
@@ -94,6 +87,14 @@ weights = torch.tensor(weights).cuda()
 
 for epoch in range(opt.nepoch):
     scheduler.step()
+    labels = divide_chunks(dataset['pcld_labels'], opt.batchSize)
+    pclds = divide_chunks(dataset['pcld'], opt.batchSize)
+    top_imgs = divide_chunks(dataset['top_color'], opt.batchSize)
+    right_imgs = divide_chunks(dataset['right_color'], opt.batchSize)
+    bottom_imgs = divide_chunks(dataset['bottom_color'], opt.batchSize)
+    left_imgs = divide_chunks(dataset['left_color'], opt.batchSize)
+    dataloader = zip(zip(pclds, top_imgs, right_imgs, bottom_imgs, left_imgs), labels)
+    print(f"Epoch {epoch+1}")
     for i, data in enumerate(dataloader, 0):
         (points, top, right, bottom, left), target = data
         points = torch.from_numpy(points).transpose(1, 2).cuda()
@@ -125,7 +126,7 @@ for epoch in range(opt.nepoch):
 
         correct = pred_choice.eq(target.data).cpu().sum()
 
-        print('[%d: %d/%d] train loss: %f accuracy: %f' % (epoch, i, num_batch, loss.item(), correct.item()/float(opt.batchSize * 2500)))
+        print('[%d: %d/%d] train loss: %f accuracy: %f' % (epoch, i, num_batch, loss.item(), correct.item()/len(target.data.flatten())))
 
         #if i % 10 == 0:
         #    j, data = next(enumerate(testdataloader, 0))
@@ -140,7 +141,9 @@ for epoch in range(opt.nepoch):
         #    correct = pred_choice.eq(target.data).cpu().sum()
         #    print('[%d: %d/%d] %s loss: %f accuracy: %f' % (epoch, i, num_batch, blue('test'), loss.item(), correct.item()/float(opt.batchSize * 2500)))
 
-    torch.save(classifier.state_dict(), '%s/seg_model_%s_%d.pth' % (opt.outf, opt.class_choice, epoch))
+    if i % 10 == 0:
+        print("Saving...")
+        torch.save(classifier.state_dict(), '%s/seg_model_%s_%d.pth' % (opt.outf, opt.class_choice, epoch))
 
 ### benchmark mIOU
 #shape_ious = []

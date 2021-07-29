@@ -14,7 +14,7 @@ class WackNet(nn.Module):
         self.k = k
         self.feature_transform=feature_transform
         self.feat = PointNetfeat(global_feat=False, feature_transform=feature_transform)
-        conv1_inp_size = 1024 + 64 + 10*4 # Features, point features, and all combined image classes
+        conv1_inp_size = 1024 + 64 + 64*4 # Features, point features, and all combined image classes
         self.conv1 = torch.nn.Conv1d(conv1_inp_size, 512, 1)
         self.conv2 = torch.nn.Conv1d(512, 256, 1)
         self.conv3 = torch.nn.Conv1d(256, 128, 1)
@@ -64,7 +64,7 @@ class ConvNet(nn.Module):
         self.conv2 = nn.Conv2d(6, 16, 5)
         self.fc1 = nn.Linear(16 * width * height, 120)
         self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, 10)
+        self.fc3 = nn.Linear(84, 64)
 
     def forward(self, x):
         x = self.pool(F.relu(self.conv1(x)))
